@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 	"unsafe"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/opencontainers/runc/libcontainer/system"
 
 	cmsg "github.com/opencontainers/runc/libcontainer/utils"
+	"golang.org/x/sys/unix"
 )
 
 const MaxSocketDirPathLength = 80
@@ -43,7 +43,7 @@ func run() int {
 	containerId := flag.Args()[3]
 
 	signals := make(chan os.Signal, 100)
-	signal.Notify(signals, syscall.SIGCHLD)
+	signal.Notify(signals, unix.SIGCHLD)
 
 	runcExitCodePipe := os.NewFile(3, "/proc/self/fd/3")
 	logFile := fmt.Sprintf("/proc/%d/fd/4", os.Getpid())
@@ -104,9 +104,9 @@ func run() int {
 		return 2
 	}
 
-	var status syscall.WaitStatus
-	var rusage syscall.Rusage
-	_, err = syscall.Wait4(runcExecCmd.Process.Pid, &status, 0, &rusage)
+	var status unix.WaitStatus
+	var rusage unix.Rusage
+	_, err = unix.Wait4(runcExecCmd.Process.Pid, &status, 0, &rusage)
 	check(err)    // Start succeeded but Wait4 failed, this can only be a programmer error
 	logFD.Close() // No more logs from runc so close fd
 
@@ -140,9 +140,9 @@ func openStdioKeepAlivePipes(processStateDir string) (io.ReadCloser, io.ReadClos
 func waitForContainerToExit(processStateDir string, containerPid int, signals chan os.Signal, ioWg *sync.WaitGroup) (exitCode int) {
 	for range signals {
 		for {
-			var status syscall.WaitStatus
-			var rusage syscall.Rusage
-			wpid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, &rusage)
+			var status unix.WaitStatus
+			var rusage unix.Rusage
+			wpid, err := unix.Wait4(-1, &status, unix.WNOHANG, &rusage)
 			if err != nil || wpid <= 0 {
 				break // wait for next SIGCHLD
 			}
@@ -270,7 +270,7 @@ func streamProcess(m *os.File, stdin io.Reader, stdout io.Writer, winszFifo io.R
 func killProcess(pidFilePath string) {
 	pid, err := readPid(pidFilePath)
 	if err == nil {
-		syscall.Kill(pid, syscall.SIGKILL)
+		unix.Kill(pid, unix.SIGKILL)
 	}
 }
 
@@ -323,15 +323,15 @@ func closeFile(closers ...io.Closer) {
 // setOnlcr copied from runc
 // https://github.com/cloudfoundry-incubator/runc/blob/02ec89829b24dfce45bb207d2344e0e6d078a93c/libcontainer/console_linux.go#L144-L160
 func setOnlcr(terminal *os.File) error {
-	var termios syscall.Termios
+	var termios unix.Termios
 
-	if err := ioctl(terminal.Fd(), syscall.TCGETS, uintptr(unsafe.Pointer(&termios))); err != nil {
+	if err := ioctl(terminal.Fd(), unix.TCGETS, uintptr(unsafe.Pointer(&termios))); err != nil {
 		return fmt.Errorf("ioctl(tty, tcgets): %s", err.Error())
 	}
 
-	termios.Oflag |= syscall.ONLCR
+	termios.Oflag |= unix.ONLCR
 
-	if err := ioctl(terminal.Fd(), syscall.TCSETS, uintptr(unsafe.Pointer(&termios))); err != nil {
+	if err := ioctl(terminal.Fd(), unix.TCSETS, uintptr(unsafe.Pointer(&termios))); err != nil {
 		return fmt.Errorf("ioctl(tty, tcsets): %s", err.Error())
 	}
 
@@ -339,7 +339,7 @@ func setOnlcr(terminal *os.File) error {
 }
 
 func ioctl(fd uintptr, flag, data uintptr) error {
-	if _, _, err := syscall.Syscall(syscall.SYS_IOCTL, fd, flag, data); err != 0 {
+	if _, _, err := unix.Syscall(unix.SYS_IOCTL, fd, flag, data); err != 0 {
 		return err
 	}
 	return nil
